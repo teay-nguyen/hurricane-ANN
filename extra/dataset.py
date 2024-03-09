@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
 import numpy as np
+import os
 
 def download_HURSAT_zip(url: str):
   root = "../data/HURSAT/"
   from bs4 import BeautifulSoup
-  import os, requests, tarfile
+  import requests, tarfile
   from tqdm import trange
 
   rep = requests.get(url)
@@ -34,6 +35,45 @@ def download_HURSAT_zip(url: str):
       file = tarfile.open(fileobj=rep.raw, mode="r|gz")
       os.mkdir(dp)
       file.extractall(path=dp)
+
+def dist_travelled(dir_path: str):
+  import math
+  from tqdm import trange
+  from netCDF4 import Dataset
+  import matplotlib.pyplot as plt
+  lat, lon, htime = [], [], []
+  f_list = os.listdir(dir_path)
+
+  for i in trange(len(f_list)):
+    fp = os.path.join(dir_path, f_list[i])
+    dat = Dataset(fp)
+    lat.append(dat.variables['lat'][:])
+    lon.append(dat.variables['lon'][:])
+    htime.append(dat.variables['htime'][:])
+
+  lat = np.array(lat, dtype=np.float32).flatten()
+  lon = np.array(lon, dtype=np.float32).flatten()
+  htime = np.array(htime, dtype=np.float32).flatten()
+  dt = lat.shape[0] // htime.shape[0]
+
+  x_pts, y_pts = [], []
+  for t in range(len(htime)):
+    i0, i1 = t*dt, (t+1)*dt
+    if i1 < lat.shape[0]:
+      # lo0, lo1, la0, la1 = map(math.radians, [lon[i0], lon[i1], lat[i0], lat[i1]])
+      lo0, lo1, la0, la1 = lon[i0], lon[i1], lat[i0], lat[i1]
+      d_lon, d_lat = lo1 - lo0, la1 - la0
+
+      a = math.sin(d_lat/2)**2 + math.cos(la0) * math.cos(la1) * math.sin(d_lon/2)**2
+      c = 2 * math.asin(math.sqrt(a))
+      dst = c * 6371.8
+
+      x_pts.append(htime[t])
+      y_pts.append(dst)
+
+
+  plt.scatter(x_pts, y_pts, s=5)
+  plt.show()
 
 if __name__ == '__main__':
   download_HURSAT_zip('https://www.ncei.noaa.gov/data/hurricane-satellite-hursat-b1/archive/v06/2016/')
