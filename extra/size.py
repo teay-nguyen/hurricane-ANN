@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
 import os
+import sys
+
+def count_files(dp: str):
+  cnt = 0
+  for ch in os.listdir(dp):
+    pth = os.path.join(dp, ch)
+    if os.path.isfile(pth): cnt += 1
+    elif os.path.isdir(pth): cnt += count_files(pth)
+  return cnt
 
 if __name__ == '__main__':
-  file_cnt = 0
-  for d in os.listdir('../data/HURSAT'):
-    dp = os.path.join('../data/HURSAT', d)
-    file_cnt += len(os.listdir(dp))
-  print(f'file count: {file_cnt}')
+  print('file count:', count_files('../data/HURDAT'))
