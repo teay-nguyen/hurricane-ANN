@@ -193,30 +193,14 @@ def HURDAT_to_csv(fp: str) -> None:
     x['time_idx'] = np.arange(len(x.index))
     return x
 
-  ''' cleaning and feature extraction  '''
-
-  print('filtering missing values...')
+  '''cleaning and feature extraction'''
   hurricane_df_list = list(filter(hurricane_values_missing_filter, hurricane_df_list))
-
-  print('filtering each hurricane for off interval times...')
   hurricane_df_list = list(map(odd_time_row_filter, hurricane_df_list))
-
-  print('calculating azimuth and delta distance features...')
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_delta_distance_and_azimuth)(h_df) for h_df in hurricane_df_list)
-
-  print("calculating x and y features...")
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_x_y)(h_df) for h_df in hurricane_df_list)
-
-  print("calculating new datetime features...")
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_new_dt_info)(h_df) for h_df in hurricane_df_list)
-
-  print("calculating jday feature...")
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_jday)(h_df) for h_df in hurricane_df_list)
-
-  print("calculating vpre feature...")
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_vpre)(h_df) for h_df in hurricane_df_list)
-
-  print("calculating landfall feature...")
   hurricane_df_list = list(map(calculate_landfall, hurricane_df_list))
   # hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_landfall)(h_df) for h_df in hurricane_df_list)
 
@@ -224,16 +208,9 @@ def HURDAT_to_csv(fp: str) -> None:
   # hurricane_df_list = list(map(calculate_time_shifted_features, hurricane_df_list))
   # hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_time_shifted_features)(h_df) for h_df in hurricane_df_list)
 
-  print("creating time idx feature...")
   hurricane_df_list = Parallel(n_jobs=-1, verbose=0)(delayed(create_time_idx)(h_df) for h_df in hurricane_df_list)
-
-  print("filtering out hurricanes with empty dataframes...")
   hurricane_df_list = [h_df for h_df in hurricane_df_list if not h_df.empty]
-
-  print("filtering out hurricanes before 1982...")
   hurricane_df_list = [h_df for h_df in hurricane_df_list if np.all(h_df['year'] >= 1982)]
-
-  print("filtering out everything that doesn't reach HU and TS status...")
   hurricane_df_list = [h_df for h_df in hurricane_df_list if np.any(h_df['system_status'] == 'HU') or np.any(h_df['system_status'] == 'TS')]
 
   final_df = pd.concat(hurricane_df_list)
@@ -243,11 +220,21 @@ def HURDAT_to_csv(fp: str) -> None:
 
   SAVE_ROOT = "../data/HURDAT_CSV"
   save_to = f"{fp.split('/')[-1][:-4]}.csv"
+  print(save_to)
   save_to = os.path.join(SAVE_ROOT, save_to)
 
   print('saved to', save_to)
 
   final_df.to_csv(save_to, index=False)
+
+def convert_all_HURDAT_to_csv() -> None:
+  import os
+  from tqdm import trange
+  files = os.listdir('../data/HURDAT')
+  for i in trange(len(files)):
+    fp = f'../data/HURDAT/{files[i]}'
+    print(fp)
+    HURDAT_to_csv(fp)
 
 def dist_travelled_latitude_longitude(dir_path: str) -> None:
   import math
@@ -290,4 +277,4 @@ def dist_travelled_latitude_longitude(dir_path: str) -> None:
 if __name__ == '__main__':
   #fetch_HURSAT('https://www.ncei.noaa.gov/data/hurricane-satellite-hursat-b1/archive/v06/2016/')
   #fetch_HURDAT()
-  HURDAT_to_csv('../data/HURDAT/hurdat2-1851-2017-050118.txt')
+  convert_all_HURDAT_to_csv()
