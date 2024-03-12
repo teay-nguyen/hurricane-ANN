@@ -6,13 +6,18 @@ from collections import OrderedDict
 from pyproj import Geod
 from joblib import Parallel, delayed
 from global_land_mask import globe
-from netCDF4 import Dataset
+from pathlib import Path
+from typing import List
 
 import os
+import torch
+import netCDF4
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests, tarfile, datetime, urllib.request, math
+
+from torch.utils.data import Dataset
 
 def fetch_HURSAT(URL: str) -> None:
   root = "../data/HURSAT/"
@@ -64,6 +69,14 @@ def fetch_HURDAT() -> None:
       with Progress(unit='B', unit_scale=True, miniters=1) as t:
         print('fetching', f'{URL}{href}')
         urllib.request.urlretrieve(f'{URL}{href}', os.path.join(ROOT, href), reporthook=t.update_to)
+
+def fetch_NHC_forecast_error_database() -> None:
+  urls = ['https://www.nhc.noaa.gov/verification/errors/1970-present_OFCL_v_BCD5_ind_ATL_TI_errors_noTDs.txt',
+          'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_ATL_TI_errors.txt',
+          'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_EPAC_TI_errors.txt',
+          'https://www.nhc.noaa.gov/verification/errors/1970-present_OFCL_v_BCD5_ind_ATL_AC_errors_noTDs.txt',
+          'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_ATL_AC_errors.txt',
+          'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_EPAC_AC_errors.txt']
 
 def HURDAT_to_csv(fp: str) -> None:
   hurdat, lines = [], []
@@ -198,8 +211,8 @@ def HURDAT_to_csv(fp: str) -> None:
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_new_dt_info)(h_df) for h_df in hurricane_df_list)
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_jday)(h_df) for h_df in hurricane_df_list)
   hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_vpre)(h_df) for h_df in hurricane_df_list)
-  hurricane_df_list = list(map(calculate_landfall, hurricane_df_list))
-  # hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_landfall)(h_df) for h_df in hurricane_df_list)
+  # hurricane_df_list = list(map(calculate_landfall, hurricane_df_list))
+  hurricane_df_list = Parallel(n_jobs=-1,verbose=0)(delayed(calculate_landfall)(h_df) for h_df in hurricane_df_list)
 
   # print("Calculating time shifted feature...")
   # hurricane_df_list = list(map(calculate_time_shifted_features, hurricane_df_list))
@@ -213,22 +226,17 @@ def HURDAT_to_csv(fp: str) -> None:
   final_df = pd.concat(hurricane_df_list)
   final_df = final_df.sort_values(by=['year','atcf_code', 'month','day', 'hour'])
 
-  print(final_df)
-
   SAVE_ROOT = "../data/HURDAT_CSV"
   save_to = f"{fp.split('/')[-1][:-4]}.csv"
-  print(save_to)
   save_to = os.path.join(SAVE_ROOT, save_to)
-
-  print('saved to', save_to)
 
   final_df.to_csv(save_to, index=False)
 
 def convert_all_HURDAT_to_csv() -> None:
   files = os.listdir('../data/HURDAT')
-  for i in trange(len(files)):
+  for i in (t := trange(len(files))):
     fp = f'../data/HURDAT/{files[i]}'
-    print(fp)
+    t.set_description(fp)
     HURDAT_to_csv(fp)
 
 def dist_travelled_latitude_longitude(dir_path: str) -> None:
@@ -237,7 +245,7 @@ def dist_travelled_latitude_longitude(dir_path: str) -> None:
 
   for i in trange(len(f_list)):
     fp = os.path.join(dir_path, f_list[i])
-    dat = Dataset(fp)
+    dat = netCDF4.Dataset(fp)
     lat.append(dat.variables['lat'][:])
     lon.append(dat.variables['lon'][:])
     htime.append(dat.variables['htime'][:])
@@ -252,18 +260,70 @@ def dist_travelled_latitude_longitude(dir_path: str) -> None:
     i0, i1 = t*dt, (t+1)*dt
     if i1 < lat.shape[0]:
       lo0, lo1, la0, la1 = map(math.radians, [lon[i0], lon[i1], lat[i0], lat[i1]])
-      # lo0, lo1, la0, la1 = lon[i0], lon[i1], lat[i0], lat[i1]
       d_lon, d_lat = lo1 - lo0, la1 - la0
-
       a = math.sin(d_lat/2)**2 + math.cos(la0) * math.cos(la1) * math.sin(d_lon/2)**2
       c = 2 * math.asin(math.sqrt(a))
       dst = c * 6371.8
-
       x_pts.append(htime[t])
       y_pts.append(dst)
 
   plt.scatter(x_pts, y_pts, s=5)
   plt.show()
+
+class HURDAT2(Dataset):
+  def __init__(self, hurdat_table, input_vars: List[str], target_vars: List[str], grouping_var: str, time_idx: str, past_horizon: int = 1, future_horizon: int = 1):
+    self.hurdat_table = None
+    if isinstance(hurdat_table, pd.DataFrame):
+        self.hurdat_table = hurdat_table
+    if isinstance(hurdat_table, str):
+        hurdat_table_path = Path(hurdat_table)
+        self.hurdat_table = pd.read_csv(hurdat_table_path)
+
+    self.input_vars = input_vars
+    self.target_vars = target_vars
+
+    self.past_horizon = past_horizon
+    self.future_horizon = future_horizon
+
+    self.grouping_var = grouping_var
+    self.time_idx = time_idx
+
+    self.generated_samples = self.generate_all_ts_samples()
+
+  def generate_all_ts_samples(self) -> List[dict]:
+    samps = []
+    for actf_code, hurricane_df in tqdm(self.hurdat_table.groupby(self.grouping_var, sort=False)):
+      storm_samps = self.generate_storm_ts_samples(hurricane_df)
+      samps.extend(storm_samps)
+    return samps
+
+  def generate_storm_ts_samples(self, storm_df) -> list[dict]:
+    data = []
+    for w in storm_df.rolling(window=self.past_horizon+self.future_horizon):
+      if w.shape[0] == (self.past_horizon+self.future_horizon):
+        data_window = {}
+
+        data_window["input"] = torch.tensor(w.head(self.past_horizon)[self.input_vars].values, dtype=torch.float)
+        data_window["input_time_idx"] = torch.tensor(w.head(self.past_horizon)[self.time_idx].values, dtype=torch.float)
+
+        data_window["output"] = torch.tensor(w.tail(self.future_horizon)[self.target_vars].values, dtype=torch.float)
+        data_window["output_time_idx"] = torch.tensor(w.tail(self.future_horizon)[self.time_idx].values, dtype=torch.float)
+
+        data_window["window_time_idx"] = torch.tensor(w[self.time_idx].values, dtype=torch.float)
+        data_window["atcf_code"] = w['atcf_code'].iloc[0]
+
+        data.append(data_window)
+    return data
+
+  def __len__(self):
+    return len(self.generated_samples)
+
+  def __getitem__(self, idx):
+    return self.generated_samples[idx]
+
+class Hurricane:
+  def __init__(self):
+    pass
 
 if __name__ == '__main__':
   #fetch_HURSAT('https://www.ncei.noaa.gov/data/hurricane-satellite-hursat-b1/archive/v06/2016/')
