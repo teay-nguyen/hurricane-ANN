@@ -8,12 +8,10 @@ from joblib import Parallel, delayed
 from global_land_mask import globe
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
-from typing import List
+from typing import Tuple
 from pprint import pprint
 
 import os
-import torch
 import netCDF4
 import numpy as np
 import pandas as pd
@@ -352,7 +350,7 @@ def dist_travelled_latitude_longitude(dir_path: str) -> None:
   plt.scatter(x_pts, y_pts, s=5)
   plt.show()
 
-class Hurricane:
+class HurricaneEntry:
   def __init__(self, name: str, id: str):
     self.name = name
     self.id = id
@@ -378,6 +376,22 @@ class Hurricane:
   def add_model(self, name, model):
     self.models[name] = model
 
+def transform_HURDAT2(dat: pd.DataFrame, err: dict) -> Tuple[dict, dict]:
+  hurricanes, storm_ids = dict(), dict()
+  models = err.keys()
+  for i, ent in dat.iterrows():
+    print(f'transforming {i+1}/{len(dat)} entries', end='\r')
+    if ent['storm_id'] not in hurricanes:
+      hurricanes[ent['storm_id']] = HurricaneEntry(ent['storm_name'], ent['storm_id'])
+      storm_ids[ent['storm_id']] = ent['storm_name']
+    hurricanes[ent['storm_id']].add_entry(ent[2:])
+  print('\nDone')
+  for storm_id in storm_ids:
+    for model in models:
+      if storm_id not in err[model].storm: continue
+      hurricanes[storm_id].add_model(model, err[model].storm[storm_id])
+  return hurricanes, storm_ids
+
 if __name__ == '__main__':
   #fetch_HURSAT('https://www.ncei.noaa.gov/data/hurricane-satellite-hursat-b1/archive/v06/2016/')
   #fetch_HURDAT()
@@ -386,5 +400,6 @@ if __name__ == '__main__':
   #fetch_NHC_forecast_error_database()
   df = HURDAT2_to_df('../data/HURDAT/hurdat2-atl-02052024.txt')
   err = parse_NHC_forecast_error('../data/NHC_FORECAST_ERROR/1970-present_OFCL_v_BCD5_ind_ATL_TI_errors_noTDs.txt')
-  print(df.query('storm_id == "AL122005"').head())
-  pprint(err['OFCL'].storm['AL122005'][datetime.datetime(2005,8,28,18,0)], indent=8)
+  if 'DEBUG' in os.environ and os.environ['DEBUG'] == '1':
+    print(df.query('storm_id == "AL122005"').head())
+    pprint(err['OFCL'].storm['AL122005'][datetime.datetime(2005,8,28,18,0)], indent=8)
