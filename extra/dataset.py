@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from bs4 import BeautifulSoup
 from tqdm import trange, tqdm
@@ -6,8 +6,11 @@ from collections import OrderedDict
 from pyproj import Geod
 from joblib import Parallel, delayed
 from global_land_mask import globe
+from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import List
+from pprint import pprint
 
 import os
 import torch
@@ -71,6 +74,12 @@ def fetch_HURDAT() -> None:
         urllib.request.urlretrieve(f'{URL}{href}', os.path.join(ROOT, href), reporthook=t.update_to)
 
 def fetch_NHC_forecast_error_database() -> None:
+  class Progress(tqdm):
+    def update_to(self, b=1, bsize=1, tsize=None):
+      if tsize is not None:
+        self.total = tsize
+      self.update(b * bsize - self.n)
+
   urls = ['https://www.nhc.noaa.gov/verification/errors/1970-present_OFCL_v_BCD5_ind_ATL_TI_errors_noTDs.txt',
           'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_ATL_TI_errors.txt',
           'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_EPAC_TI_errors.txt',
@@ -78,7 +87,15 @@ def fetch_NHC_forecast_error_database() -> None:
           'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_ATL_AC_errors.txt',
           'https://www.nhc.noaa.gov/verification/errors/1989-present_OFCL_v_BCD5_ind_EPAC_AC_errors.txt']
 
-def HURDAT_to_csv(fp: str) -> None:
+  ROOT = '../data/NHC_FORECAST_ERROR'
+  for url in urls:
+    nm = url.split('/')[-1]
+    fp = os.path.join(ROOT, nm)
+    with Progress(unit='B', unit_scale=True, miniters=1) as t:
+      print('fetching', url)
+      urllib.request.urlretrieve(url, fp, reporthook=t.update_to)
+
+def HURDAT_to_df(fp: str) -> pd.DataFrame:
   hurdat, lines = [], []
 
   with open(fp, 'r') as f:
@@ -134,8 +151,31 @@ def HURDAT_to_csv(fp: str) -> None:
       data['wind_radii_64_NW'] = float(line_dat[19])
 
       hurdat.append(data)
+  return pd.DataFrame(hurdat)
 
-  src_df = pd.DataFrame(hurdat)
+def HURDAT2_to_df(fp: str) -> pd.DataFrame:
+  db = []
+  with open(fp, 'r') as f:
+    for line in f:
+      line = line.replace(' ', '').split(',')
+      if line[0][:2] == 'AL':
+        storm_id = line[0]
+        storm_name = line[1]
+        storm_entries = line[2]
+        for i in range(int(storm_entries)):
+          ent = f.readline().replace(' ', '').split(',')
+          ent = [None if x == '-999' else x for x in ent]
+          timestamp = datetime.datetime(int(ent[0][:4]), int(ent[0][4:6]), int(ent[0][6:8]), int(ent[1][:2]), int(ent[1][3:]))
+          db.append([storm_id, storm_name, timestamp] + ent[2:-1])
+      else: print('unidentified storm '.join(str(line[0])))
+
+  return pd.DataFrame(db, columns = ['storm_id', 'storm_name', 'entry_time', 'entry_id', 'entry_status',
+                                     'lat', 'long','max_wind', 'min_pressure', '34kt_ne', '34kt_se',
+                                     '34kt_sw', '34kt_nw', '50kt_ne', '50kt_se', '50kt_sw',
+                                     '50kt_nw', '64kt_ne', '64kt_se', '64kt_sw', '64kt_nw'])
+
+def HURDAT_to_csv(fp: str) -> None:
+  src_df = HURDAT_to_df(fp)
 
   hurricane_df_list = []
 
@@ -227,9 +267,7 @@ def HURDAT_to_csv(fp: str) -> None:
   final_df = final_df.sort_values(by=['year','atcf_code', 'month','day', 'hour'])
 
   SAVE_ROOT = "../data/HURDAT_CSV"
-  save_to = f"{fp.split('/')[-1][:-4]}.csv"
-  save_to = os.path.join(SAVE_ROOT, save_to)
-
+  save_to = os.path.join(SAVE_ROOT, f"{fp.split('/')[-1][:-4]}.csv")
   final_df.to_csv(save_to, index=False)
 
 def convert_all_HURDAT_to_csv() -> None:
@@ -237,7 +275,51 @@ def convert_all_HURDAT_to_csv() -> None:
   for i in (t := trange(len(files))):
     fp = f'../data/HURDAT/{files[i]}'
     t.set_description(fp)
-    HURDAT_to_csv(fp)
+    try: HURDAT_to_csv(fp)
+    except: print(f"can't process {fp}")
+
+@dataclass
+class ModelObj:
+  name: str
+  storm: dict
+  def __init__(self, nm):
+    self.name = nm
+    self.storm = {}
+
+def parse_NHC_forecast_error(fp:str='../data/NHC_FORECAST_ERROR/1970-present_OFCL_v_BCD5_ind_ATL_TI_errors_noTDs.txt') -> dict:
+  models = {}
+  with open(fp, 'r') as f:
+    lines = f.read().splitlines()
+    line = lines[1].split()
+    names = line[2:]
+    for name in names:
+      models[name] = ModelObj(name)
+    for line in lines[9:]:
+      line = line.split()
+      timestamp = datetime.datetime.strptime(line[0], '%d-%m-%Y/%H:%M:%S')
+      storm_id = line[1]
+      samp_sizes = {"F012": float(line[2]), "F024": float(line[3]),"F036": float(line[4]), "F048": float(line[5]), "F072": float(line[6]), "F096": float(line[7]), "F120": float(line[8]), "F144": float(line[9]), "F168": float(line[10])}
+      latitude = float(line[11])
+      longitude = float(line[12])
+      wind_spd = float(line[13])
+
+      for i in range(len(names)):
+        intensity_forecast = dict(list(zip([timestamp, timestamp + timedelta(hours = 12), timestamp + timedelta(hours = 24), timestamp + timedelta(hours = 36), timestamp + timedelta(hours = 48), timestamp + timedelta(hours = 72), timestamp + timedelta(hours = 96), timestamp + timedelta(hours = 120), timestamp + timedelta(hours = 144), timestamp + timedelta(hours = 168)], [None if x == "-9999.0" else float(x) for x in line[14 + (20 * i) : 24 + (20 * i)]])))
+        track_forecast = dict(list(zip([timestamp, timestamp + timedelta(hours = 12), timestamp + timedelta(hours = 24), timestamp + timedelta(hours = 36), timestamp + timedelta(hours = 48), timestamp + timedelta(hours = 72), timestamp + timedelta(hours = 96), timestamp + timedelta(hours = 120), timestamp + timedelta(hours = 144), timestamp + timedelta(hours = 168)], [None if x == "-9999.0" else float(x) for x in line[24 + (20 * i) : 34 + (20 * i)]])))
+        if storm_id not in models[names[i]].storm.keys():
+          models[names[i]].storm[storm_id] = dict()
+        models[names[i]].storm[storm_id].update({
+          timestamp: {
+            "sample_sizes": samp_sizes,
+            "lat": latitude,
+            "long": longitude,
+            "wind_speed": wind_spd,
+            "intensity_forecast": intensity_forecast,
+            "track_forecast": track_forecast
+          }
+        })
+
+  return models
 
 def dist_travelled_latitude_longitude(dir_path: str) -> None:
   lat, lon, htime = [], [], []
@@ -270,62 +352,39 @@ def dist_travelled_latitude_longitude(dir_path: str) -> None:
   plt.scatter(x_pts, y_pts, s=5)
   plt.show()
 
-class HURDAT2(Dataset):
-  def __init__(self, hurdat_table, input_vars: List[str], target_vars: List[str], grouping_var: str, time_idx: str, past_horizon: int = 1, future_horizon: int = 1):
-    self.hurdat_table = None
-    if isinstance(hurdat_table, pd.DataFrame):
-        self.hurdat_table = hurdat_table
-    if isinstance(hurdat_table, str):
-        hurdat_table_path = Path(hurdat_table)
-        self.hurdat_table = pd.read_csv(hurdat_table_path)
-
-    self.input_vars = input_vars
-    self.target_vars = target_vars
-
-    self.past_horizon = past_horizon
-    self.future_horizon = future_horizon
-
-    self.grouping_var = grouping_var
-    self.time_idx = time_idx
-
-    self.generated_samples = self.generate_all_ts_samples()
-
-  def generate_all_ts_samples(self) -> List[dict]:
-    samps = []
-    for actf_code, hurricane_df in tqdm(self.hurdat_table.groupby(self.grouping_var, sort=False)):
-      storm_samps = self.generate_storm_ts_samples(hurricane_df)
-      samps.extend(storm_samps)
-    return samps
-
-  def generate_storm_ts_samples(self, storm_df) -> list[dict]:
-    data = []
-    for w in storm_df.rolling(window=self.past_horizon+self.future_horizon):
-      if w.shape[0] == (self.past_horizon+self.future_horizon):
-        data_window = {}
-
-        data_window["input"] = torch.tensor(w.head(self.past_horizon)[self.input_vars].values, dtype=torch.float)
-        data_window["input_time_idx"] = torch.tensor(w.head(self.past_horizon)[self.time_idx].values, dtype=torch.float)
-
-        data_window["output"] = torch.tensor(w.tail(self.future_horizon)[self.target_vars].values, dtype=torch.float)
-        data_window["output_time_idx"] = torch.tensor(w.tail(self.future_horizon)[self.time_idx].values, dtype=torch.float)
-
-        data_window["window_time_idx"] = torch.tensor(w[self.time_idx].values, dtype=torch.float)
-        data_window["atcf_code"] = w['atcf_code'].iloc[0]
-
-        data.append(data_window)
-    return data
-
-  def __len__(self):
-    return len(self.generated_samples)
-
-  def __getitem__(self, idx):
-    return self.generated_samples[idx]
-
 class Hurricane:
-  def __init__(self):
-    pass
+  def __init__(self, name: str, id: str):
+    self.name = name
+    self.id = id
+    self.entries = dict()
+    self.models = dict()
+
+  def add_entry(self, arr):
+    ent = {
+      arr[0] : {
+        'entry_time': arr[0],
+        'entry_id' : arr[1],
+        'entry_status': arr[2],
+        'lat' : float(arr[3][:-1]),
+        'long': float(arr[4][:-1]),
+        'max_wind': float(arr[5]),
+        'min_pressure': None if arr[6] is None else float(arr[6]),
+        'wind_radii': arr[7:]
+      }
+    }
+
+    self.entries.update(ent)
+
+  def add_model(self, name, model):
+    self.models[name] = model
 
 if __name__ == '__main__':
   #fetch_HURSAT('https://www.ncei.noaa.gov/data/hurricane-satellite-hursat-b1/archive/v06/2016/')
   #fetch_HURDAT()
-  convert_all_HURDAT_to_csv()
+  #convert_all_HURDAT_to_csv()
+  #dat_df = HURDAT_to_df('../data/HURDAT/hurdat2-1851-2017-050118.txt')
+  #fetch_NHC_forecast_error_database()
+  df = HURDAT2_to_df('../data/HURDAT/hurdat2-atl-02052024.txt')
+  err = parse_NHC_forecast_error('../data/NHC_FORECAST_ERROR/1970-present_OFCL_v_BCD5_ind_ATL_TI_errors_noTDs.txt')
+  print(df.query('storm_id == "AL122005"').head())
+  pprint(err['OFCL'].storm['AL122005'][datetime.datetime(2005,8,28,18,0)], indent=8)
