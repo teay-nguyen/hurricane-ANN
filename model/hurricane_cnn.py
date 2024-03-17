@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-import torchvision.transforms as transforms
 from typing import Tuple
 from tqdm import trange
-from tinygrad import Tensor
+from torch import Tensor, nn
+import torch
+import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import numpy as np
 import cv2, os
@@ -108,6 +109,40 @@ def load_test_data(subset: str) -> Tuple[Tensor, Tensor]:
 
   return Tensor(X_test), Tensor(Y_test)
 
+class HurricaneCNN(torch.nn.Module):
+  def __init__(self):
+    super(HurricaneCNN, self).__init__()
+    self.conv1 = nn.Conv2d(3,  16, 5, stride=(2,2), padding=1)
+    self.conv2 = nn.Conv2d(16, 32, 5, stride=(2,2), padding=1)
+    self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+
+    self.m = nn.MaxPool2d(2)
+
+    self.l1 = nn.Linear(576, 512)
+    self.l2 = nn.Linear(512, 1)
+
+    self.relu = nn.ReLU()
+    self.sigmoid = nn.Sigmoid()
+
+    torch.nn.init.xavier_uniform_(self.l1.weight)
+    torch.nn.init.xavier_uniform_(self.l2.weight)
+
+  def forward(self, x: Tensor) -> Tensor:
+    x = self.conv1(x); x = self.relu(x); x = self.m(x)
+    x = self.conv2(x); x = self.relu(x); x = self.m(x)
+    x = self.conv3(x); x = self.relu(x); x = self.m(x)
+    x = x.flatten(1)
+    x = self.l1(x); x = self.relu(x)
+    x = self.l2(x); x = self.sigmoid(x)
+    return x
+
 if __name__ == '__main__':
-  # X_train, Y_train = load_train_data()
-  pass
+  X_train, Y_train = load_train_data()
+  print(X_train.shape, Y_train.shape)
+
+  perm = np.random.permutation(X_train.shape[0])
+  X_train = Tensor(X_train.numpy()[perm,:,:,:]).reshape(-1, 3, 128, 128)
+  Y_train = Tensor(Y_train.numpy()[perm,])
+
+  model = HurricaneCNN()
+  print(model(X_train).detach().numpy())
