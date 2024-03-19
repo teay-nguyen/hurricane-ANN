@@ -18,8 +18,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import requests, tarfile, datetime, urllib.request, math
 
-from torch.utils.data import Dataset
-
 def fetch_HURSAT(URL: str) -> None:
   root = "../data/HURSAT/"
 

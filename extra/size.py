@@ -12,4 +12,4 @@ def count_files(dp: str):
   return cnt
 
 if __name__ == '__main__':
-  print('file count:', count_files('../data/HURDAT'))
+  print('file count:', count_files('../data/images'))
