@@ -2,13 +2,16 @@
 
 from tqdm import trange
 from typing import Tuple, Optional, Union
+from torchinfo import summary
 import torch
 import torch.nn as nn
 import cv2, os
 import numpy as np
 import matplotlib.pyplot as plt
 
+print(torch.__version__)
 np.random.seed(1337)
+torch.manual_seed(1337)
 
 def load_imgs(subset: str, tensor:bool=False) -> Tuple[np.ndarray, np.ndarray] | Tuple[torch.tensor, torch.tensor]:
   dat:Optional[np.ndarray] = None; files:Optional[np.ndarray] = None; imgs:Optional[np.ndarray] = None
@@ -25,12 +28,11 @@ def load_imgs(subset: str, tensor:bool=False) -> Tuple[np.ndarray, np.ndarray] |
   labels = ([1] * len(os.listdir(os.path.join(root, 'damage')))) + \
            ([0] * len(os.listdir(os.path.join(root, 'no_damage'))))
   labels = np.array(labels, dtype=np.uint8)
-  if tensor: ret = (torch.tensor(imgs).reshape(-1, 3, 128, 128).to(torch.float), torch.tensor(labels)) if dat is None else \
-                   (torch.tensor(dat).reshape(-1, 3, 128, 128).to(torch.float),  torch.tensor(labels))
-  else: ret = (imgs.reshape(-1, 3, 128, 128).astype(np.float32), labels) if dat is None else \
-              (dat.reshape(-1, 3, 128, 128).astype(np.float32), labels)
+  if tensor: ret = (torch.tensor(imgs).reshape(-1, 3, 128, 128).to(torch.float)/255.0, torch.tensor(labels)) if dat is None else \
+                   (torch.tensor(dat).reshape(-1, 3, 128, 128).to(torch.float)/255.0,  torch.tensor(labels))
+  else: ret = (imgs.reshape(-1, 3, 128, 128).astype(np.float32)/255.0, labels) if dat is None else \
+              (dat.reshape(-1, 3, 128, 128).astype(np.float32)/255.0, labels)
   return ret
-
 
 # TODO: make model train
 
@@ -49,9 +51,9 @@ class FireModule(nn.Module):
     x1 = self.relu(self.expand3x3(x))
     return torch.cat([x0, x1], 1)
 
-class ConvNet(nn.Module):
+class SqueezeNet11(nn.Module):
   def __init__(self, num_classes:int=2, dropout:float=.5):
-    super(ConvNet, self).__init__()
+    super(SqueezeNet11, self).__init__()
     self.num_classes = num_classes
     self.features = nn.Sequential(
       nn.Conv2d(3, 64, kernel_size=3, stride=2),
@@ -81,22 +83,70 @@ class ConvNet(nn.Module):
     x = self.classifier(x)
     return torch.flatten(x, 1)
 
-def shuffle(x:Union[np.ndarray, torch.tensor], y:Union[np.ndarray, torch.tensor]) -> Union[np.ndarray, torch.tensor]:
+# helpers
+def imshow(x:Union[np.ndarray, torch.tensor]) -> None:
+  plt.imshow(x.reshape(128, 128, 3))
+  plt.show()
+
+def shuffle(x:Union[np.ndarray, torch.tensor], y:Union[np.ndarray, torch.tensor]):
   perm = np.random.permutation(x.shape[0])
   return x[perm], y[perm]
 
+
+BS = 256
+EPOCHS = 200
+LR = .08
+WEIGHTS_PATH = './weights/v1.pt'
+
+def lr_schedule(lr:float, epoch:int):
+  optim_factor = 0
+  if epoch > 160: optim_factor = 3
+  elif epoch > 120: optim_factor = 2
+  elif epoch > 60: optim_factor = 1
+  return lr * pow(.2, optim_factor)
+
 if __name__ == '__main__':
-  BS = 32
-  lrs = [1e-3, 1e-4, 1e-5, 1e-5]
-  epochss = [13, 3, 3, 1]
-  model = ConvNet(num_classes=2)
-  X_train, Y_train = load_imgs('train_another', tensor=True)
-  X_train, Y_train = shuffle(X_train, Y_train)
+  X_val, Y_val = load_imgs('validation_another', tensor=True)
+  X_train, Y_train = load_imgs('train_another', tensor=False)
+  X_train, Y_trein = shuffle(X_train, Y_train)
+  X_val, Y_val = shuffle(X_val, Y_val)
+
+  model = SqueezeNet11()
+  lossfn = nn.CrossEntropyLoss()
   steps = X_train.shape[0] // BS
-  print(type(X_train), X_train.shape)
 
-  samps = np.random.randint(0, X_train.shape[0], size=(BS))
-  X, Y = X_train[samps], Y_train[samps]
+  losses, accuracies = [], []
 
-  out = model(X)
-  print(out.shape)
+  def train(epoch:int) -> None:
+    model.train()
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr_schedule(LR, epoch), momentum=.9, weight_decay=0.0002)
+    for step in range(steps):
+      samp = np.random.randint(0, X_train.shape[0], size=(BS))
+      x = torch.tensor(X_train[samp], requires_grad=False)
+      y = torch.tensor(Y_train[samp])
+      optimizer.zero_grad()
+      out = model(x)
+      loss = lossfn(out, y)
+      loss.backward()
+      optimizer.step()
+      cat = torch.argmax(out, dim=1)
+      accuracy = (cat == y).detach().numpy().mean()
+      losses.append(loss.item())
+      accuracies.append(accuracy)
+      print(f'\rTraining epoch: step [{step+1}/{steps}] lr {lr_schedule(LR, epoch)} loss {loss.item()}, accuracy {accuracy}', end='')
+      # t.set_description(f'lr {lr_schedule(LR, epoch)} loss {loss.item()} accuracy {accuracy}')
+    print()
+
+  def validation(epoch:int) -> None:
+    model.eval()
+    out = model(X_val)
+    loss = lossfn(out, Y_val)
+    cat = torch.argmax(out, dim=1)
+    accuracy = (cat == Y_val).detach().numpy().mean()
+    print(f'validation epoch {epoch} loss {loss.item()} accuracy {accuracy}')
+
+  for epoch in range(1, EPOCHS+1):
+    train(epoch)
+    validation(epoch)
+
+  torch.save(model.state_dict(), WEIGHTS_PATH)
