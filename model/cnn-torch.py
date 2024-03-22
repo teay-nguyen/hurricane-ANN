@@ -96,7 +96,7 @@ def shuffle(x:Union[np.ndarray, torch.tensor], y:Union[np.ndarray, torch.tensor]
 BS = 256
 EPOCHS = 200
 LR = .08
-WEIGHTS_PATH = './weights/v1.pt'
+WEIGHTS_PATH = './weights/v1.pth'
 
 def lr_schedule(lr:float, epoch:int):
   optim_factor = 0
@@ -117,6 +117,8 @@ if __name__ == '__main__':
 
   losses, accuracies = [], []
 
+  summary(model, (1, 3, 128, 128))
+
   def train(epoch:int) -> None:
     model.train()
     optimizer = torch.optim.SGD(model.parameters(), lr=lr_schedule(LR, epoch), momentum=.9, weight_decay=0.0002)
@@ -131,9 +133,10 @@ if __name__ == '__main__':
       optimizer.step()
       cat = torch.argmax(out, dim=1)
       accuracy = (cat == y).detach().numpy().mean()
-      losses.append(loss.item())
-      accuracies.append(accuracy)
-      print(f'\rTraining epoch: step [{step+1}/{steps}] lr {lr_schedule(LR, epoch)} loss {loss.item()}, accuracy {accuracy}', end='')
+      if step == (steps-1):
+        losses.append(loss.item())
+        accuracies.append(accuracy)
+      print(f'\rTraining epoch {epoch}: step [{step+1}/{steps}] lr {lr_schedule(LR, epoch)} batch size {BS} loss {loss.item()}, accuracy {accuracy}', end='')
       # t.set_description(f'lr {lr_schedule(LR, epoch)} loss {loss.item()} accuracy {accuracy}')
     print()
 
@@ -143,10 +146,15 @@ if __name__ == '__main__':
     loss = lossfn(out, Y_val)
     cat = torch.argmax(out, dim=1)
     accuracy = (cat == Y_val).detach().numpy().mean()
-    print(f'validation epoch {epoch} loss {loss.item()} accuracy {accuracy}')
+    print(f'Validation epoch {epoch} loss {loss.item()} accuracy {accuracy}')
 
   for epoch in range(1, EPOCHS+1):
     train(epoch)
     validation(epoch)
 
   torch.save(model.state_dict(), WEIGHTS_PATH)
+
+  plt.ylim(-0.1, 1.1)
+  plt.plot(losses)
+  plt.plot(accuracies)
+  plt.show()
