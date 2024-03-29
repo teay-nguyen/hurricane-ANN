@@ -4,6 +4,7 @@ saves/
 masks/
 disasters/
 disasters_npy/
+hurricane_npy/
 train_labels/
 test_labels/
 *.py[cod]

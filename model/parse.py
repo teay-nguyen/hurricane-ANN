@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 
+np.random.seed(1337)
+
 ''' xBD dataset '''
 
 DAMAGE_SUBTYPES = {
@@ -98,9 +100,30 @@ def get_hurricane_files(subset:str) -> Dict[str, List[str]]:
   ret['no_damage'] = [os.path.join(p_subset, 'no_damage', fp) for fp in os.listdir(os.path.join(p_subset, 'no_damage'))]
   return ret
 
-if __name__ == "__main__":
+def load_hurricane_imgs(shuffle_train:bool=False) -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
   from PIL import Image
-  files = get_hurricane_files('train_another')
-  img = np.array(Image.open(files['damage'][0]), dtype=np.uint8)
-  plt.imshow(img)
+  os.makedirs('./hurricane_npy', exist_ok=True)
+  datasets = {'test':dict(), 'test_another':dict(), 'train_another':dict(), 'validation_another':dict()}
+  for subset in datasets:
+    k0, k1 = f'./hurricane_npy/{subset}_damage.npy', f'./hurricane_npy/{subset}_no_damage.npy'
+    files = get_hurricane_files(subset)
+    if not os.path.exists(k0):
+      datasets[subset]['damage'] = np.array([np.array(Image.open(files['damage'][i])) for i in tqdm.trange(len(files['damage']))], dtype=np.uint8)
+      np.save(k0, datasets[subset]['damage'])
+    else: datasets[subset]['damage'] = np.load(k0).astype(np.uint8)
+    if not os.path.exists(k1):
+      datasets[subset]['no_damage'] = np.array([np.array(Image.open(files['no_damage'][i])) for i in tqdm.trange(len(files['no_damage']))], dtype=np.uint8)
+      np.save(k1, datasets[subset]['no_damage'])
+    else: datasets[subset]['no_damage'] = np.load(k1).astype(np.uint8)
+  if shuffle_train:
+    shuf_dmg = np.random.permutation(datasets['train_another']['damage'].shape[0])
+    shuf_no_dmg = np.random.permutation(datasets['train_another']['no_damage'].shape[0])
+    datasets['train_another']['damage'] = datasets['train_another']['damage'][shuf_dmg]
+    datasets['train_another']['no_damage'] = datasets['train_another']['no_damage'][shuf_no_dmg]
+  return datasets
+
+if __name__ == "__main__":
+  dat = load_hurricane_imgs(shuffle_train=True)
+  print(dat['train_another']['damage'][0].shape)
+  plt.imshow(dat['train_another']['damage'][0])
   plt.show()
