@@ -1,5 +1,10 @@
 data/
 __pycache__/
 saves/
+masks/
+disasters/
+disasters_npy/
+train_labels/
+test_labels/
 *.py[cod]
 *$py.class
