@@ -8,6 +8,7 @@ import cv2, json, os, glob, tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
+import torch
 
 np.random.seed(1337)
 
@@ -117,13 +118,14 @@ def load_hurricane_imgs() -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
     else: datasets[subset]['no_damage'] = np.load(k1).astype(np.uint8)
   return datasets
 
-def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another', shuffle:bool=False) -> npt.NDArray[np.uint8]:
+def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another', shuffle:bool=False, to_tensor:bool=False) -> npt.NDArray[np.uint8]:
   assert subset in dataset, 'subset is not valid'
-  X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0)
+  X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0).astype(np.float32)
   Y = np.array(([1]*dataset[subset]['damage'].shape[0])+([0]*dataset[subset]['no_damage'].shape[0]), dtype=np.uint8)
   if shuffle:
     shuf = np.random.permutation(X.shape[0])
     X, Y = X[shuf], Y[shuf]
+  if to_tensor: X, Y = torch.tensor(X).float().reshape(-1, 3, 128, 128), torch.tensor(Y)
   return X, Y
 
 if __name__ == "__main__":
