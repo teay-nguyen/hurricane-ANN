@@ -100,7 +100,7 @@ def get_hurricane_files(subset:str) -> Dict[str, List[str]]:
   ret['no_damage'] = [os.path.join(p_subset, 'no_damage', fp) for fp in os.listdir(os.path.join(p_subset, 'no_damage'))]
   return ret
 
-def load_hurricane_imgs(shuffle_train:bool=False) -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
+def load_hurricane_imgs() -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
   from PIL import Image
   os.makedirs('./hurricane_npy', exist_ok=True)
   datasets = {'test':dict(), 'test_another':dict(), 'train_another':dict(), 'validation_another':dict()}
@@ -115,15 +115,21 @@ def load_hurricane_imgs(shuffle_train:bool=False) -> Dict[str, Dict[str, npt.NDA
       datasets[subset]['no_damage'] = np.array([np.array(Image.open(files['no_damage'][i])) for i in tqdm.trange(len(files['no_damage']))], dtype=np.uint8)
       np.save(k1, datasets[subset]['no_damage'])
     else: datasets[subset]['no_damage'] = np.load(k1).astype(np.uint8)
-  if shuffle_train:
-    shuf_dmg = np.random.permutation(datasets['train_another']['damage'].shape[0])
-    shuf_no_dmg = np.random.permutation(datasets['train_another']['no_damage'].shape[0])
-    datasets['train_another']['damage'] = datasets['train_another']['damage'][shuf_dmg]
-    datasets['train_another']['no_damage'] = datasets['train_another']['no_damage'][shuf_no_dmg]
   return datasets
 
+def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another', shuffle:bool=False) -> npt.NDArray[np.uint8]:
+  assert subset in dataset, 'subset is not valid'
+  X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0)
+  Y = np.array(([1]*dataset[subset]['damage'].shape[0])+([0]*dataset[subset]['no_damage'].shape[0]), dtype=np.uint8)
+  if shuffle:
+    shuf = np.random.permutation(X.shape[0])
+    X, Y = X[shuf], Y[shuf]
+  return X, Y
+
 if __name__ == "__main__":
-  dat = load_hurricane_imgs(shuffle_train=True)
-  print(dat['train_another']['damage'][0].shape)
-  plt.imshow(dat['train_another']['damage'][0])
+  # example
+  dat = load_hurricane_imgs()
+  dat, labels = generate_labels(dat, subset='train_another', shuffle=True)
+  print(labels[0])
+  plt.imshow(dat[0])
   plt.show()
