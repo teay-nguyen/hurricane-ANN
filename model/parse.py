@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 from shutil import copy2 as cp
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List, Dict, Union
 from joblib import Parallel, delayed
 from shapely.wkt import loads
 import cv2, json, os, glob, tqdm
@@ -118,7 +118,8 @@ def load_hurricane_imgs() -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
     else: datasets[subset]['no_damage'] = np.load(k1).astype(np.uint8)
   return datasets
 
-def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another', shuffle:bool=False, to_tensor:bool=False) -> npt.NDArray[np.uint8]:
+def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another',
+                    shuffle:bool=False, to_tensor:bool=False) -> Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
   assert subset in dataset, 'subset is not valid'
   X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0).astype(np.float32)
   Y = np.array(([1]*dataset[subset]['damage'].shape[0])+([0]*dataset[subset]['no_damage'].shape[0]), dtype=np.uint8)
