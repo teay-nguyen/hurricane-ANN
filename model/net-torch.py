@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from parse import load_hurricane_imgs, generate_labels, shuffle_data
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl

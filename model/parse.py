@@ -11,6 +11,7 @@ import numpy.typing as npt
 import torch
 
 np.random.seed(1337)
+torch.manual_seed(1337)
 
 ''' xBD dataset '''
 
@@ -95,7 +96,7 @@ def xBD_npy() -> None:
 def get_hurricane_files(subset:str) -> Dict[str, List[str]]:
   assert subset in ('test', 'test_another', 'train_another', 'validation_another')
   ret = {'damage':[], 'no_damage':[]}
-  root = '../data/images/hurricane-imgs'
+  root = '../data/images/Post-hurricane'
   p_subset = os.path.join(root, subset)
   ret['damage'] = [os.path.join(p_subset, 'damage', fp) for fp in os.listdir(os.path.join(p_subset, 'damage'))]
   ret['no_damage'] = [os.path.join(p_subset, 'no_damage', fp) for fp in os.listdir(os.path.join(p_subset, 'no_damage'))]
@@ -109,10 +110,12 @@ def load_hurricane_imgs() -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
     k0, k1 = f'./hurricane_npy/{subset}_damage.npy', f'./hurricane_npy/{subset}_no_damage.npy'
     files = get_hurricane_files(subset)
     if not os.path.exists(k0):
+      print('populating', k0)
       datasets[subset]['damage'] = np.array([np.array(Image.open(files['damage'][i])) for i in tqdm.trange(len(files['damage']))], dtype=np.uint8)
       np.save(k0, datasets[subset]['damage'])
     else: datasets[subset]['damage'] = np.load(k0).astype(np.uint8)
     if not os.path.exists(k1):
+      print('populating', k1)
       datasets[subset]['no_damage'] = np.array([np.array(Image.open(files['no_damage'][i])) for i in tqdm.trange(len(files['no_damage']))], dtype=np.uint8)
       np.save(k1, datasets[subset]['no_damage'])
     else: datasets[subset]['no_damage'] = np.load(k1).astype(np.uint8)
@@ -124,8 +127,15 @@ def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:
   X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0).astype(np.uint8)
   Y = np.array(([1]*dataset[subset]['damage'].shape[0])+([0]*dataset[subset]['no_damage'].shape[0]), dtype=np.uint8)
   if shuffle: shuf = np.random.permutation(X.shape[0]); X, Y = X[shuf], Y[shuf]
-  if to_tensor: return torch.tensor(X).float().reshape(-1, 3, 128, 128), torch.tensor(Y)
+  if to_tensor: return torch.tensor(X), torch.tensor(Y)
   else: return X, Y
+
+def shuffle_data(X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor]) -> \
+                 Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
+  assert type(X) == type(Y), 'X is not the same as Y'
+  if isinstance(X, np.ndarray) and isinstance(Y, np.ndarray): perm = np.random.permutation(X.shape[0])
+  else: perm = torch.randint(0, X.shape[0], (X.shape[0],))
+  return X[perm], Y[perm]
 
 if __name__ == "__main__":
   # example
