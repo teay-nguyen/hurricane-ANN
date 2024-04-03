@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
 from shutil import copy2 as cp
-from typing import Tuple, Optional, List, Dict, Union
+from typing import Tuple, Optional, List, Dict, Union, Callable
 from joblib import Parallel, delayed
 from shapely.wkt import loads
+from torchvision.transforms import v2
+from torch.utils.data import Dataset
 import cv2, json, os, glob, tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,7 +22,7 @@ DAMAGE_SUBTYPES = {
   "minor-damage": 2,
   "major-damage": 3,
   "destroyed": 4,
-  "un-classified": 1 #?
+  "un-classified": 1
 }
 
 def mask_polygon(poly, in_shape:Tuple[int, int]=(1024,1024)) -> npt.NDArray[np.uint8]:
@@ -91,7 +93,11 @@ def xBD_npy() -> None:
         img = cv2.imread(p_img, cv2.IMREAD_GRAYSCALE)
         np.save(os.path.join('./disasters_npy', i, d, img_dir[img_idx]).replace('.png', '.npy'), img)
 
-''' hurricane dataset '''
+'''
+Building Damage Annotation on Post-Hurricane
+Satellite Imagery Based on Convolutional Neural
+Networks
+'''
 
 def get_hurricane_files(subset:str) -> Dict[str, List[str]]:
   assert subset in ('test', 'test_another', 'train_another', 'validation_another')
@@ -136,6 +142,28 @@ def shuffle_data(X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArr
   if isinstance(X, np.ndarray) and isinstance(Y, np.ndarray): perm = np.random.permutation(X.shape[0])
   else: perm = torch.randint(0, X.shape[0], (X.shape[0],))
   return X[perm], Y[perm]
+
+def upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch.Tensor:
+  return v2.Resize((150,150))(X)
+
+class HurricaneImages(Dataset):
+  def __init__(self, X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor],
+               transform:Optional[Callable[[torch.Tensor], torch.Tensor]]=None):
+    self.X = torch.tensor(X) if isinstance(X, np.ndarray) else X
+    self.Y = torch.tensor(Y) if isinstance(Y, np.ndarray) else Y
+    self.transform = transform
+
+  def __len__(self):
+    return self.X.shape[0]
+
+  def __getitem__(self, i):
+    x = self.X[i].permute(2, 0, 1)
+    if self.transform:
+      return self.transform(x), self.Y[i]
+    return x, self.Y[i]
+
+  def __str__(self):
+    return f'<{self.__class__.__name__} object at {hex(id(self))}, X={self.X.shape}, Y={self.Y.shape}, transform={self.transform}>'
 
 if __name__ == "__main__":
   # example
