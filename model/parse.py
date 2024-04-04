@@ -96,7 +96,7 @@ def xBD_npy() -> None:
 '''
 Building Damage Annotation on Post-Hurricane
 Satellite Imagery Based on Convolutional Neural
-Networks
+Networks (Quoc Dung Cao & Youngjun Choe)
 '''
 
 def get_hurricane_files(subset:str) -> Dict[str, List[str]]:
@@ -146,6 +146,62 @@ def shuffle_data(X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArr
 def upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch.Tensor:
   return v2.Resize((150,150))(X)
 
+def scale_and_upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch.Tensor:
+  return v2.Resize((150,150))(X.float() / 255.)
+
+def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
+                            Y:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
+                            scale=False, load_path='./saves/augmented.npz', shuffle=False) -> Tuple[torch.Tensor, torch.Tensor]:
+  # pre-generate augmented images
+  # TODO: find efficient method to augment images
+  if os.path.exists(load_path):
+    print(f'[info] {load_path} found. fetching augmented images')
+    dat = np.load(load_path)
+    if shuffle:
+      shuf = torch.randint(0, dat['X_train'].shape[0], (dat['X_train'].shape[0],))
+      return torch.tensor(dat['X_train'])[shuf], torch.tensor(dat['Y_train'])[shuf]
+    else: return torch.tensor(dat['X_train']), torch.tensor(dat['Y_train'])
+  if isinstance(X, np.ndarray): X = torch.tensor(X)
+  if isinstance(Y, np.ndarray): Y = torch.tensor(Y)
+  if scale: X = (X.float() / 255.)
+  X = upscale_img(X.permute(0,3,1,2))
+  composes = (
+    (v2.Compose([v2.RandomHorizontalFlip(p=1), v2.Resize((150,150))]), 'horizontal_flip'),
+    (v2.Compose([v2.RandomVerticalFlip(p=1), v2.Resize((150,150))]), 'vertical_flip'),
+    (v2.Compose([v2.RandomAffine(degrees=0, translate=[0,.2], shear=[-10,10,-10,10]),
+                 v2.Resize((150,150))]), 'random_affine'),
+    (v2.Compose([v2.RandomRotation((-100, 100)),
+                 v2.Resize((150,150))]), 'rotation'),
+    (v2.Compose([v2.RandomHorizontalFlip(p=1),
+                 v2.RandomVerticalFlip(p=1),
+                 v2.Resize((150,150))]), 'flip_hv_transform'),
+    (v2.Compose([v2.ColorJitter(brightness=.2, contrast=.1, saturation=.2, hue=.3),
+                 v2.Resize((150,150))]), 'color_jitter'),
+    (v2.Compose([v2.RandomResizedCrop(size=(128,128)),
+                 v2.Resize((150,150))]), 'random_resized_crop'),
+    (v2.Compose([v2.RandomAdjustSharpness(sharpness_factor=2),
+                 v2.Resize((150,150))]), 'random_adjust_sharpness'))
+  X_a, Y_a = [], []
+  print('[info] generating augmented images...')
+  for i in range(len(composes)):
+    print(f'   [info] applying transform: {composes[i][1]}')
+    samps = torch.randint(0, X.shape[0], (5000,))
+    X_a.append(composes[i][0](X[samps]))
+    Y_a.append(Y[samps])
+  print('[info] merging augmented images...')
+  X_a, Y_a = torch.cat(X_a, dim=0), torch.cat(Y_a, dim=0)
+  ret_X = torch.empty(X.shape[0]+X_a.shape[0], 3, 150, 150)
+  ret_Y = torch.empty(Y.shape[0]+Y_a.shape[0])
+  torch.cat([X, X_a], dim=0, out=ret_X)
+  torch.cat([Y, Y_a], dim=0, out=ret_Y)
+  ret_X = ret_X.permute(0, 2, 3, 1)
+  np.savez(load_path, X_train=ret_X.detach().numpy(), Y_train=ret_Y.detach().numpy())
+  print(f'[info] augmented images saved to {load_path}')
+  if shuffle:
+    shuf = torch.randint(0, ret_X.shape[0], (ret_X.shape[0],))
+    return ret_X[shuf], ret_Y[shuf]
+  else: return ret_X, ret_Y
+
 class HurricaneImages(Dataset):
   def __init__(self, X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor],
                transform:Optional[Callable[[torch.Tensor], torch.Tensor]]=None):
@@ -157,18 +213,9 @@ class HurricaneImages(Dataset):
     return self.X.shape[0]
 
   def __getitem__(self, i):
-    x = self.X[i].permute(2, 0, 1)
     if self.transform:
-      return self.transform(x), self.Y[i]
-    return x, self.Y[i]
+      return self.transform(self.X[i].permute(2,0,1).float()), self.Y[i]
+    return self.X[i].permute(2,0,1).float(), self.Y[i]
 
   def __str__(self):
     return f'<{self.__class__.__name__} object at {hex(id(self))}, X={self.X.shape}, Y={self.Y.shape}, transform={self.transform}>'
-
-if __name__ == "__main__":
-  # example
-  dat = load_hurricane_imgs()
-  dat, labels = generate_labels(dat, subset='train_another', shuffle=True)
-  print(labels[0])
-  plt.imshow(dat[0])
-  plt.show()
