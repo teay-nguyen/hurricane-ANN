@@ -7,7 +7,6 @@ from shapely.wkt import loads
 from torchvision.transforms import v2
 from torch.utils.data import Dataset
 import cv2, json, os, glob, tqdm
-import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import torch
@@ -147,20 +146,15 @@ def upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch.Tensor:
   return v2.Resize((150,150))(X)
 
 def scale_and_upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch.Tensor:
+  if isinstance(X, np.ndarray):
+    return v2.Resize((150,150))(torch.tensor(X).float() / 255.)
   return v2.Resize((150,150))(X.float() / 255.)
 
 def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
                             Y:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
-                            scale=False, load_path='./saves/augmented.npz', shuffle=False) -> Tuple[torch.Tensor, torch.Tensor]:
-  # pre-generate augmented images
-  # TODO: find efficient method to augment images
-  if os.path.exists(load_path):
-    print(f'[info] {load_path} found. fetching augmented images')
-    dat = np.load(load_path)
-    if shuffle:
-      shuf = torch.randint(0, dat['X_train'].shape[0], (dat['X_train'].shape[0],))
-      return torch.tensor(dat['X_train'])[shuf], torch.tensor(dat['Y_train'])[shuf]
-    else: return torch.tensor(dat['X_train']), torch.tensor(dat['Y_train'])
+                            loadpath_X:str, loadpath_Y:str, scale=True) -> None:
+  # this is the dumbest shit i've written so far
+  # TODO: find more efficient way to do this
   if isinstance(X, np.ndarray): X = torch.tensor(X)
   if isinstance(Y, np.ndarray): Y = torch.tensor(Y)
   if scale: X = (X.float() / 255.)
@@ -168,7 +162,7 @@ def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float3
   composes = (
     (v2.Compose([v2.RandomHorizontalFlip(p=1), v2.Resize((150,150))]), 'horizontal_flip'),
     (v2.Compose([v2.RandomVerticalFlip(p=1), v2.Resize((150,150))]), 'vertical_flip'),
-    (v2.Compose([v2.RandomAffine(degrees=0, translate=[0,.2], shear=[-10,10,-10,10]),
+    (v2.Compose([v2.RandomAffine(degrees=(0,0), translate=[0,.2], shear=[-10,10,-10,10]),
                  v2.Resize((150,150))]), 'random_affine'),
     (v2.Compose([v2.RandomRotation((-100, 100)),
                  v2.Resize((150,150))]), 'rotation'),
@@ -195,12 +189,18 @@ def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float3
   torch.cat([X, X_a], dim=0, out=ret_X)
   torch.cat([Y, Y_a], dim=0, out=ret_Y)
   ret_X = ret_X.permute(0, 2, 3, 1)
-  np.savez(load_path, X_train=ret_X.detach().numpy(), Y_train=ret_Y.detach().numpy())
-  print(f'[info] augmented images saved to {load_path}')
-  if shuffle:
-    shuf = torch.randint(0, ret_X.shape[0], (ret_X.shape[0],))
-    return ret_X[shuf], ret_Y[shuf]
-  else: return ret_X, ret_Y
+  print(f'[info] saving augmented images to {loadpath_X}')
+  np.save(loadpath_X, ret_X.detach().numpy().astype(np.float32))
+  print(f'[info] saving augmented images to {loadpath_Y}')
+  np.save(loadpath_Y, ret_Y.detach().numpy().astype(np.uint8))
+  print(f'[info] augmented images saved to {loadpath_X} and {loadpath_Y}')
+
+def fetch_label_batch(batch_idx:npt.NDArray[np.uint32], loadpath_X:str='./saves/augmented_X.npy', loadpath_Y:str='./saves/augmented_Y.npy', to_tensor=False) ->\
+                      Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
+  X_train = np.load(loadpath_X, mmap_mode='r')[batch_idx]
+  Y_train = np.load(loadpath_Y, mmap_mode='r')[batch_idx]
+  if to_tensor: return torch.tensor(X_train), torch.tensor(Y_train)
+  return X_train.astype(np.float32), Y_train.astype(np.uint8)
 
 class HurricaneImages(Dataset):
   def __init__(self, X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor],
