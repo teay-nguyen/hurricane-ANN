@@ -12,7 +12,21 @@ import numpy.typing as npt
 import torch
 
 np.random.seed(1337)
+os.environ['OMP_NUM_THREADS'] = '1'
+
 torch.manual_seed(1337)
+torch.set_num_threads(1)
+
+class bcolors:
+  HEADER = '\033[95m'
+  OKBLUE = '\033[94m'
+  OKCYAN = '\033[96m'
+  OKGREEN = '\033[92m'
+  WARNING = '\033[93m'
+  FAIL = '\033[91m'
+  ENDC = '\033[0m'
+  BOLD = '\033[1m'
+  UNDERLINE = '\033[4m'
 
 ''' xBD dataset '''
 
@@ -150,6 +164,14 @@ def scale_and_upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch
     return v2.Resize((150,150))(torch.tensor(X).float() / 255.)
   return v2.Resize((150,150))(X.float() / 255.)
 
+def permute_img_for_train(img:torch.Tensor) -> torch.Tensor:
+  assert len(img.shape) == 4 and img.shape[-1] == 3
+  return img.permute(0, 3, 1, 2)
+
+def permute_img_for_view(img:torch.Tensor) -> torch.Tensor:
+  assert len(img.shape) == 4 and img.shape[1] == 3
+  return img.permute(0, 2, 3, 1)
+
 def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
                             Y:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
                             loadpath_X:str, loadpath_Y:str, scale=True) -> None:
@@ -176,31 +198,31 @@ def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float3
     (v2.Compose([v2.RandomAdjustSharpness(sharpness_factor=2),
                  v2.Resize((150,150))]), 'random_adjust_sharpness'))
   X_a, Y_a = [], []
-  print('[info] generating augmented images...')
+  print(f'{bcolors.BOLD}[info]{bcolors.ENDC} generating augmented images...')
   for i in range(len(composes)):
-    print(f'   [info] applying transform: {composes[i][1]}')
+    print(f'   {bcolors.BOLD}[info]{bcolors.ENDC} applying transform: {composes[i][1]}')
     samps = torch.randint(0, X.shape[0], (5000,))
     X_a.append(composes[i][0](X[samps]))
     Y_a.append(Y[samps])
-  print('[info] merging augmented images...')
+  print(f'{bcolors.BOLD}[info]{bcolors.ENDC} merging augmented images...')
   X_a, Y_a = torch.cat(X_a, dim=0), torch.cat(Y_a, dim=0)
   ret_X = torch.empty(X.shape[0]+X_a.shape[0], 3, 150, 150)
   ret_Y = torch.empty(Y.shape[0]+Y_a.shape[0])
   torch.cat([X, X_a], dim=0, out=ret_X)
   torch.cat([Y, Y_a], dim=0, out=ret_Y)
   ret_X = ret_X.permute(0, 2, 3, 1)
-  print(f'[info] saving augmented images to {loadpath_X}')
+  print(f'{bcolors.BOLD}[info]{bcolors.ENDC} saving augmented images to {loadpath_X}')
   np.save(loadpath_X, ret_X.detach().numpy().astype(np.float32))
-  print(f'[info] saving augmented images to {loadpath_Y}')
+  print(f'{bcolors.BOLD}[info]{bcolors.ENDC} saving augmented images to {loadpath_Y}')
   np.save(loadpath_Y, ret_Y.detach().numpy().astype(np.uint8))
-  print(f'[info] augmented images saved to {loadpath_X} and {loadpath_Y}')
+  print(f'{bcolors.BOLD}[info]{bcolors.ENDC} augmented images saved to {loadpath_X} and {loadpath_Y}')
 
-def fetch_label_batch(batch_idx:npt.NDArray[np.uint32], loadpath_X:str='./saves/augmented_X.npy', loadpath_Y:str='./saves/augmented_Y.npy', to_tensor=False) ->\
-                      Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
+def fetch_label_batch(batch_idx:npt.NDArray[np.int32], loadpath_X:str, loadpath_Y:str, to_tensor=False) ->\
+                      Union[Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]], Tuple[torch.Tensor, torch.Tensor]]:
   X_train = np.load(loadpath_X, mmap_mode='r')[batch_idx]
   Y_train = np.load(loadpath_Y, mmap_mode='r')[batch_idx]
-  if to_tensor: return torch.tensor(X_train), torch.tensor(Y_train)
-  return X_train.astype(np.float32), Y_train.astype(np.uint8)
+  if not to_tensor: return X_train.astype(np.float32), Y_train.astype(np.uint8)
+  else: return torch.tensor(X_train), torch.tensor(Y_train)
 
 class HurricaneImages(Dataset):
   def __init__(self, X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor],
