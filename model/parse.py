@@ -165,11 +165,13 @@ def scale_and_upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch
   return v2.Resize((150,150))(X.float() / 255.)
 
 def permute_img_for_train(img:torch.Tensor) -> torch.Tensor:
-  assert len(img.shape) == 4 and img.shape[-1] == 3
+  assert isinstance(img, torch.Tensor)
+  assert len(img.shape) == 4 and img.shape[-1] == 3, f'image shape invalid: {img.shape}'
   return img.permute(0, 3, 1, 2)
 
 def permute_img_for_view(img:torch.Tensor) -> torch.Tensor:
-  assert len(img.shape) == 4 and img.shape[1] == 3
+  assert isinstance(img, torch.Tensor)
+  assert len(img.shape) == 4 and img.shape[1] == 3, f'image shape invalid: {img.shape}'
   return img.permute(0, 2, 3, 1)
 
 def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float32], torch.Tensor],
@@ -217,12 +219,16 @@ def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float3
   np.save(loadpath_Y, ret_Y.detach().numpy().astype(np.uint8))
   print(f'{bcolors.BOLD}[info]{bcolors.ENDC} augmented images saved to {loadpath_X} and {loadpath_Y}')
 
-def fetch_label_batch(batch_idx:npt.NDArray[np.int32], loadpath_X:str, loadpath_Y:str, to_tensor=False) ->\
+def fetch_label_batch(batch_idx:npt.NDArray[np.int32], loadpath_X:str, loadpath_Y:str,
+                      target_transform:Optional[Callable[[torch.Tensor], torch.Tensor]]=None, to_tensor:bool=False) ->\
                       Union[Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]], Tuple[torch.Tensor, torch.Tensor]]:
+  if not to_tensor: assert target_transform is None, "transform cannot be called on np.ndarray"
   X_train = np.load(loadpath_X, mmap_mode='r')[batch_idx]
   Y_train = np.load(loadpath_Y, mmap_mode='r')[batch_idx]
-  if not to_tensor: return X_train.astype(np.float32), Y_train.astype(np.uint8)
-  else: return torch.tensor(X_train), torch.tensor(Y_train)
+  if to_tensor:
+    if target_transform is not None: return target_transform(torch.tensor(X_train)).to(torch.float32), torch.tensor(Y_train).to(torch.uint8)
+    return torch.tensor(X_train).to(torch.float32), torch.tensor(Y_train).to(torch.uint8)
+  else: return X_train.astype(np.float32), Y_train.astype(np.uint8)
 
 class HurricaneImages(Dataset):
   def __init__(self, X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor],
