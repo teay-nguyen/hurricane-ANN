@@ -219,15 +219,15 @@ def generate_augmented_imgs(X:Union[npt.NDArray[np.uint8], npt.NDArray[np.float3
   np.save(loadpath_Y, ret_Y.detach().numpy().astype(np.uint8))
   print(f'{bcolors.BOLD}[info]{bcolors.ENDC} augmented images saved to {loadpath_X} and {loadpath_Y}')
 
-def fetch_label_batch(batch_idx:npt.NDArray[np.int32], loadpath_X:str, loadpath_Y:str,
+def fetch_label_batch(batch_idx:npt.NDArray[np.int32], loadpath_X:str, loadpath_Y:str, device:torch.device,
                       target_transform:Optional[Callable[[torch.Tensor], torch.Tensor]]=None, to_tensor:bool=False) ->\
                       Union[Tuple[npt.NDArray[np.float32], npt.NDArray[np.uint8]], Tuple[torch.Tensor, torch.Tensor]]:
   if not to_tensor: assert target_transform is None, "transform cannot be called on np.ndarray"
   X_train = np.load(loadpath_X, mmap_mode='r')[batch_idx]
   Y_train = np.load(loadpath_Y, mmap_mode='r')[batch_idx]
   if to_tensor:
-    if target_transform is not None: return target_transform(torch.tensor(X_train)).to(torch.float32), torch.tensor(Y_train).to(torch.uint8)
-    return torch.tensor(X_train).to(torch.float32), torch.tensor(Y_train).to(torch.uint8)
+    if target_transform is not None: return target_transform(torch.tensor(X_train)).type(torch.float32).to(device), torch.tensor(Y_train).type(torch.uint8).to(device)
+    return torch.tensor(X_train).type(torch.float32).to(device), torch.tensor(Y_train).type(torch.uint8).to(device)
   else: return X_train.astype(np.float32), Y_train.astype(np.uint8)
 
 class HurricaneImages(Dataset):

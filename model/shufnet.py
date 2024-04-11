@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from collections import OrderedDict
 from torch.nn import init
 
-def conv3x3(in_channels, out_channels, stride=1, padding=1, bias=True, groups=1):
+def conv3x3(device, in_channels, out_channels, stride=1, padding=1, bias=True, groups=1):
   return nn.Conv2d(
     in_channels,
     out_channels,
@@ -15,17 +15,17 @@ def conv3x3(in_channels, out_channels, stride=1, padding=1, bias=True, groups=1)
     padding=padding,
     bias=bias,
     groups=groups
-  )
+  ).to(device)
 
 
-def conv1x1(in_channels, out_channels, groups=1):
+def conv1x1(device, in_channels, out_channels, groups=1):
   return nn.Conv2d(
     in_channels,
     out_channels,
     kernel_size=1,
     groups=groups,
     stride=1
-  )
+  ).to(device)
 
 def channel_shuffle(x:torch.Tensor, groups:int) -> torch.Tensor:
   bs, n_channels, h, w = x.data.size()
@@ -35,8 +35,9 @@ def channel_shuffle(x:torch.Tensor, groups:int) -> torch.Tensor:
   return x.view(bs, -1, h, w)
 
 class Unit(nn.Module):
-  def __init__(self, in_channels, out_channels, groups=3, grouped_conv=True, combine='add'):
+  def __init__(self, device, in_channels, out_channels, groups=3, grouped_conv=True, combine='add'):
     super(Unit, self).__init__()
+    self.device = device
     self.in_channels = in_channels
     self.out_channels = out_channels
     self.grouped_conv = grouped_conv
@@ -63,6 +64,7 @@ class Unit(nn.Module):
       relu=True)
 
     self.depthwise_conv3x3 = conv3x3(
+      self.device,
       self.bottleneck_channels, self.bottleneck_channels,
       stride=self.depthwise_stride, groups=self.bottleneck_channels)
     self.bn_after_depthwise = nn.BatchNorm2d(self.bottleneck_channels)
@@ -84,7 +86,7 @@ class Unit(nn.Module):
 
   def _make_grouped_conv1x1(self, in_channels, out_channels, groups, batch_norm=True, relu=False):
     modules = OrderedDict()
-    conv = conv1x1(in_channels, out_channels, groups=groups)
+    conv = conv1x1(self.device, in_channels, out_channels, groups=groups)
     modules['conv1x1'] = conv
     if batch_norm: modules['batch_norm'] = nn.BatchNorm2d(out_channels)
     if relu: modules['relu'] = nn.ReLU()
@@ -104,8 +106,9 @@ class Unit(nn.Module):
     return F.relu(x)
 
 class Net(nn.Module):
-  def __init__(self, in_channels=3, n_classes=2, groups=3):
+  def __init__(self, device, in_channels=3, n_classes=2, groups=3):
     super(Net, self).__init__()
+    self.device = device
     self.groups = groups
     self.stage_repeats = (3, 7, 3)
     self.in_channels = in_channels
@@ -116,13 +119,13 @@ class Net(nn.Module):
     elif groups == 4: self.stage_out_channels = [-1, 24, 272, 544, 1088]
     elif groups == 8: self.stage_out_channels = [-1, 24, 384, 768, 1536]
     else: raise ValueError(f"{groups} groups not supported for 1x1 grouped convolutions")
-    self.conv1 = conv3x3(self.in_channels, self.stage_out_channels[1], stride=2)
+    self.conv1 = conv3x3(self.device, self.in_channels, self.stage_out_channels[1], stride=2)
     self.mpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     self.stage2 = self._make_stage(2)
     self.stage3 = self._make_stage(3)
     self.stage4 = self._make_stage(4)
     n_inputs = self.stage_out_channels[-1]
-    self.fc = nn.Linear(n_inputs, self.n_classes)
+    self.fc = nn.Linear(n_inputs, self.n_classes).to(device)
     self.init_params()
 
   def init_params(self):
@@ -144,20 +147,22 @@ class Net(nn.Module):
     stage_name = f"Unit Stage {stage}"
     grouped_conv = stage > 2
     first_module = Unit(
+      self.device,
       self.stage_out_channels[stage-1],
       self.stage_out_channels[stage],
       groups=self.groups,
       grouped_conv=grouped_conv,
-      combine='concat')
+      combine='concat').to(self.device)
     modules[stage_name+'_0'] = first_module
     for i in range(self.stage_repeats[stage-2]):
       name = stage_name+f'_{i+1}'
       module = Unit(
+        self.device,
         self.stage_out_channels[stage],
         self.stage_out_channels[stage],
         groups=self.groups,
         grouped_conv=True,
-        combine='add')
+        combine='add').to(self.device)
       modules[name] = module
     return nn.Sequential(modules)
 
