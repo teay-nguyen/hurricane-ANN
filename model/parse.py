@@ -141,7 +141,7 @@ def load_hurricane_imgs() -> Dict[str, Dict[str, npt.NDArray[np.uint8]]]:
   return datasets
 
 def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:str='train_another', shuffle:bool=False, to_tensor:bool=False) -> \
-                    Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
+                    Union[Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]], Tuple[torch.Tensor, torch.Tensor]]:
   assert subset in dataset, 'subset is not valid'
   X = np.concatenate((dataset[subset]['damage'], dataset[subset]['no_damage']), axis=0).astype(np.uint8)
   Y = np.array(([1]*dataset[subset]['damage'].shape[0])+([0]*dataset[subset]['no_damage'].shape[0]), dtype=np.uint8)
@@ -150,7 +150,7 @@ def generate_labels(dataset:Dict[str, Dict[str, npt.NDArray[np.uint8]]], subset:
   else: return X, Y
 
 def shuffle_data(X:Union[npt.NDArray[np.uint8], torch.Tensor], Y:Union[npt.NDArray[np.uint8], torch.Tensor]) -> \
-                 Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]] | Tuple[torch.Tensor, torch.Tensor]:
+                 Union[Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]], Tuple[torch.Tensor, torch.Tensor]]:
   assert type(X) == type(Y), 'X is not the same as Y'
   if isinstance(X, np.ndarray) and isinstance(Y, np.ndarray): perm = np.random.permutation(X.shape[0])
   else: perm = torch.randint(0, X.shape[0], (X.shape[0],))
@@ -164,7 +164,7 @@ def scale_and_upscale_img(X:Union[npt.NDArray[np.uint8], torch.Tensor]) -> torch
     return v2.Resize((150,150))(torch.tensor(X).float() / 255.)
   return v2.Resize((150,150))(X.float() / 255.)
 
-def permute_img_for_train(img:torch.Tensor) -> torch.Tensor:
+def permute_img_for_inference(img:torch.Tensor) -> torch.Tensor:
   assert isinstance(img, torch.Tensor)
   assert len(img.shape) == 4 and img.shape[-1] == 3, f'image shape invalid: {img.shape}'
   return img.permute(0, 3, 1, 2)
